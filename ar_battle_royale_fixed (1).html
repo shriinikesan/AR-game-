@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>BATTLEZONE.AR</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
+<!-- TensorFlow + COCO-SSD for real person detection -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.2.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"></script>
+<!-- Gun.js for real-time multiplayer room sync -->
+<script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+<style>
+:root {
+  --green: #00ff88;
+  --red:   #ff3344;
+  --blue:  #44aaff;
+  --gold:  #ffcc44;
+  --bg:    #08100a;
+  --surf:  #0f1a10;
+  --text:  #c8ffd4;
+  --dim:   rgba(200,255,212,0.4);
+  --mono:  'Share Tech Mono', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Rajdhani', sans-serif;
+  overflow: hidden;
+  height: 100%;
+  /* Prevent iOS overscroll */
+  position: fixed;
+  width: 100%;
+}
+
+/* ── SCREENS ─────────────────────────────────────────── */
+.screen {
+  display: none;
+  height: 100dvh;
+  height: 100vh; /* fallback */
+  width: 100vw;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 1.5rem env(safe-area-inset-bottom, 0px);
+  overflow-y: auto;
+}
+.screen.active { display: flex; }
+
+/* ── LOBBY / WAITING ─────────────────────────────────── */
+.logo {
+  font-family: var(--mono);
+  font-size: clamp(1.8rem, 7vw, 3.5rem);
+  color: var(--green);
+  letter-spacing: .08em;
+  text-shadow: 0 0 30px rgba(0,255,136,.4);
+  margin-bottom: .4rem;
+}
+.tagline {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: .25em;
+  margin-bottom: 1.8rem;
+  text-align: center;
+}
+.form-wrap { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 8px; }
+
+input, select {
+  width: 100%;
+  padding: 13px 14px;
+  border-radius: 7px;
+  border: 1px solid rgba(0,255,136,.2);
+  background: var(--surf);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 15px; /* 16px+ prevents iOS zoom */
+  outline: none;
+}
+input:focus, select:focus { border-color: rgba(0,255,136,.5); box-shadow: 0 0 0 3px rgba(0,255,136,.08); }
+select option { background: var(--surf); }
+
+.btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 7px;
+  border: 1px solid rgba(0,255,136,.25);
+  background: var(--surf);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 14px;
+  cursor: pointer;
+  min-height: 50px;
+  transition: background .15s, border-color .15s;
+  touch-action: manipulation;
+  user-select: none;
+}
+.btn:hover  { background: rgba(0,255,136,.08); }
+.btn:active { background: rgba(0,255,136,.18); }
+.btn.primary { border-color: var(--green); color: var(--green); }
+.btn.danger  { border-color: var(--red);   color: var(--red); }
+
+.divider {
+  font-family: var(--mono);
+  font-size: 10px;
+  opacity: .4;
+  text-align: center;
+  padding: 4px 0;
+}
+
+#gpsStatus {
+  font-family: var(--mono);
+  font-size: 11px;
+  opacity: .65;
+  margin-top: 1rem;
+  text-align: center;
+}
+
+/* ── PLAYER LIST ─────────────────────────────────────── */
+#playerList {
+  width: 100%;
+  max-width: 360px;
+  margin-bottom: 1rem;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.player-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  margin: 5px 0;
+  border: 1px solid rgba(0,255,136,.15);
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--surf);
+}
+
+/* ── GAME SCREEN ─────────────────────────────────────── */
+#game { position: relative; background: #000; overflow: hidden; justify-content: flex-start; padding: 0; }
+
+#camvideo, #overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+#overlay { pointer-events: none; z-index: 2; }
+
+/* ── HUD ────────────────────────────────────────────── */
+#hud {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  padding: max(env(safe-area-inset-top, 10px), 10px) 14px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  font-family: var(--mono);
+  font-size: clamp(13px, 3.5vw, 16px);
+  background: linear-gradient(to bottom, rgba(0,0,0,.8) 0%, rgba(0,0,0,0) 100%);
+  z-index: 3;
+}
+.hud-block { display: flex; flex-direction: column; gap: 2px; }
+.hud-label { font-size: 10px; opacity: .5; letter-spacing: .15em; }
+.hud-value { font-size: clamp(14px, 4vw, 18px); color: var(--green); }
+.hud-value.danger { color: var(--red); }
+.hud-value.warning { color: var(--gold); }
+
+/* ── HP BAR ─────────────────────────────────────────── */
+#hpBarWrap {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 78px);
+  left: 12px; right: 12px;
+  height: 5px;
+  background: rgba(255,255,255,.1);
+  border-radius: 3px;
+  z-index: 3;
+}
+#hpBar {
+  height: 100%;
+  background: var(--green);
+  border-radius: 3px;
+  transition: width .4s, background .4s;
+}
+
+/* ── LOG ────────────────────────────────────────────── */
+#log {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: clamp(11px, 2.8vw, 13px);
+  background: rgba(0,0,0,.65);
+  padding: 6px 14px;
+  border-radius: 20px;
+  z-index: 3;
+  white-space: nowrap;
+  max-width: 90vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid rgba(0,255,136,.15);
+}
+
+/* ── CROSSHAIR ──────────────────────────────────────── */
+#crosshair {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  pointer-events: none;
+  width: 60px; height: 60px;
+}
+#crosshair svg { width: 100%; height: 100%; }
+
+/* ── CONTROLS ───────────────────────────────────────── */
+#controls {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  /* key fix: safe-area-inset-bottom for notched phones */
+  padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  background: linear-gradient(to top, rgba(0,0,0,.92) 0%, rgba(0,0,0,.0) 100%);
+  z-index: 4; /* above overlay */
+}
+.ctrl-btn {
+  background: rgba(10, 20, 12, 0.75);
+  border: 1px solid rgba(0,255,136,.3);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: var(--mono);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 10px 4px;
+  min-height: 62px;
+  touch-action: manipulation;
+  user-select: none;
+  transition: background .1s, border-color .1s;
+  -webkit-tap-highlight-color: transparent;
+}
+.ctrl-btn:active { background: rgba(0,255,136,.2); border-color: var(--green); }
+.ctrl-btn .icon { font-size: 22px; line-height: 1; }
+.ctrl-btn .label { font-size: 9px; letter-spacing: .08em; opacity: .75; }
+.ctrl-btn.shoot-btn { border-color: var(--red); }
+.ctrl-btn.shoot-btn:active { background: rgba(255,51,68,.25); }
+
+/* ── LOADING OVERLAY ────────────────────────────────── */
+#loadingOverlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.9);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  gap: 16px;
+}
+#loadingOverlay .logo { margin-bottom: 0; }
+.spinner {
+  width: 36px; height: 36px;
+  border: 3px solid rgba(0,255,136,.15);
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#loadingText { font-family: var(--mono); font-size: 13px; color: var(--dim); }
+
+/* ── ROOM CODE ──────────────────────────────────────── */
+.room-code {
+  font-family: var(--mono);
+  font-size: clamp(2.5rem, 12vw, 4rem);
+  color: var(--green);
+  letter-spacing: .3em;
+  text-shadow: 0 0 30px rgba(0,255,136,.35);
+  margin: .5rem 0 1.5rem;
+}
+
+/* ── ELIMINATED OVERLAY ─────────────────────────────── */
+#endOverlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.85);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 8;
+  gap: 20px;
+}
+#endOverlay.show { display: flex; }
+#endTitle { font-family: var(--mono); font-size: clamp(2rem, 8vw, 3.5rem); }
+#endStats { font-family: var(--mono); font-size: 14px; color: var(--dim); line-height: 2; text-align: center; }
+
+/* Scan pulse ring */
+@keyframes scanRing {
+  0%   { transform: translate(-50%,-50%) scale(0.3); opacity: 1; }
+  100% { transform: translate(-50%,-50%) scale(3);   opacity: 0; }
+}
+.scan-ring {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 100px; height: 100px;
+  border: 2px solid var(--blue);
+  border-radius: 50%;
+  animation: scanRing 1.2s ease-out forwards;
+  pointer-events: none;
+  z-index: 5;
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ LOBBY SCREEN ════════════════ -->
+<div id="lobby" class="screen active">
+  <div class="logo">BATTLEZONE.AR</div>
+  <div class="tagline">REAL WORLD · REAL GPS · REAL STAKES</div>
+
+  <div class="form-wrap">
+    <input type="text" id="nameInput" placeholder="Callsign e.g. GHOST_01" maxlength="12" autocomplete="off">
+    <select id="teamSelect">
+      <option value="red">🔴  RED TEAM</option>
+      <option value="blue">🔵  BLUE TEAM</option>
+      <option value="solo">⚪  SOLO / NO TEAM</option>
+    </select>
+
+    <button class="btn primary" onclick="hostGame()">⚡ HOST NEW GAME</button>
+    <div class="divider">─── or join existing ───</div>
+    <input type="text" id="roomInput" placeholder="Enter 4-digit room code" maxlength="8" autocomplete="off">
+    <button class="btn" onclick="joinGame()">→ JOIN ROOM</button>
+    <button class="btn" onclick="startSolo()">▶ SOLO DEMO  (no GPS needed)</button>
+  </div>
+
+  <div id="gpsStatus">📡 Ready — tap to begin</div>
+</div>
+
+<!-- ═══════════════ WAITING ROOM ════════════════ -->
+<div id="waiting" class="screen">
+  <div class="logo" style="font-size:1.8rem">ROOM LOBBY</div>
+  <div style="font-family:var(--mono);font-size:11px;opacity:.4;letter-spacing:.2em">SHARE THIS CODE</div>
+  <div class="room-code" id="roomCodeDisplay">----</div>
+  <div id="playerList"></div>
+  <div class="form-wrap">
+    <button class="btn primary" onclick="launchMatch()">▶ START MATCH</button>
+    <button class="btn danger" onclick="goLobby()" style="margin-top:6px">⬅ BACK TO LOBBY</button>
+  </div>
+</div>
+
+<!-- ═══════════════ GAME SCREEN ════════════════ -->
+<div id="game" class="screen">
+  <!-- Camera feed -->
+  <video id="camvideo" autoplay muted playsinline webkit-playsinline x5-playsinline></video>
+
+  <!-- AR overlay canvas -->
+  <canvas id="overlay"></canvas>
+
+  <!-- Crosshair -->
+  <div id="crosshair">
+    <svg viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <line x1="30" y1="8"  x2="30" y2="22" stroke="#00ff88" stroke-width="2"/>
+      <line x1="30" y1="38" x2="30" y2="52" stroke="#00ff88" stroke-width="2"/>
+      <line x1="8"  y1="30" x2="22" y2="30" stroke="#00ff88" stroke-width="2"/>
+      <line x1="38" y1="30" x2="52" y2="30" stroke="#00ff88" stroke-width="2"/>
+      <circle cx="30" cy="30" r="4" stroke="#00ff88" stroke-width="1.5"/>
+    </svg>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div class="hud-block">
+      <div class="hud-label">HEALTH</div>
+      <div class="hud-value" id="hudHp">100</div>
+    </div>
+    <div class="hud-block" style="text-align:center">
+      <div class="hud-label" id="hudRoom">SOLO</div>
+      <div class="hud-label" id="hudMode" style="color:var(--gold)">SCANNING...</div>
+    </div>
+    <div class="hud-block" style="text-align:right">
+      <div class="hud-label">AMMO / KILLS</div>
+      <div class="hud-value"><span id="hudAmmo">10</span> / <span id="hudKills">0</span></div>
+    </div>
+  </div>
+
+  <!-- HP bar -->
+  <div id="hpBarWrap"><div id="hpBar" style="width:100%"></div></div>
+
+  <!-- Combat log -->
+  <div id="log">Entering battlefield...</div>
+
+  <!-- Controls – 5 buttons always visible -->
+  <div id="controls">
+    <button class="ctrl-btn shoot-btn" onclick="shoot()">
+      <span class="icon">🎯</span><span class="label">SHOOT</span>
+    </button>
+    <button class="ctrl-btn" onclick="reloadAmmo()">
+      <span class="icon">🔄</span><span class="label">RELOAD</span>
+    </button>
+    <button class="ctrl-btn" onclick="heal()">
+      <span class="icon">💊</span><span class="label">HEAL</span>
+    </button>
+    <button class="ctrl-btn" onclick="scan()">
+      <span class="icon">📡</span><span class="label">SCAN</span>
+    </button>
+    <button class="ctrl-btn" onclick="switchCamera()">
+      <span class="icon">📷</span><span class="label">CAM</span>
+    </button>
+  </div>
+
+  <!-- Loading overlay (shown while camera + AI loads) -->
+  <div id="loadingOverlay">
+    <div class="logo" style="font-size:1.6rem">BATTLEZONE.AR</div>
+    <div class="spinner"></div>
+    <div id="loadingText">Initializing...</div>
+  </div>
+
+  <!-- End-game overlay -->
+  <div id="endOverlay">
+    <div id="endTitle"></div>
+    <div id="endStats"></div>
+    <button class="btn primary" style="max-width:220px" onclick="goLobby()">BACK TO LOBBY</button>
+  </div>
+</div>
+
+<!-- ═══════════════ SCRIPT ════════════════════════════════ -->
+<script>
+'use strict';
+
+// ─── COLORS (canvas can't use CSS vars) ──────────────────
+const C = { green:'#00ff88', red:'#ff3344', blue:'#44aaff', gold:'#ffcc44', white:'#ffffff' };
+
+// ─── PLAYER STATE ─────────────────────────────────────────
+let player = {
+  id:    null,
+  name:  'GHOST',
+  team:  'solo',
+  hp:    100,
+  ammo:  10,
+  kills: 0,
+  alive: true,
+  lat:   0,
+  lng:   0
+};
+let isSolo      = false;
+let roomCode    = null;
+let roomPlayers = {};      // id → { name, team, hp, alive, lat, lng }
+
+// ─── CAMERA ───────────────────────────────────────────────
+let cameraStream   = null;
+let allCameras     = [];
+let cameraFacing   = 'environment'; // 'environment' | 'user'
+let cameraDevIdx   = 0;
+
+// ─── AI VISION ────────────────────────────────────────────
+let cocoModel  = null;
+let detections = [];      // COCO-SSD results (person class only)
+
+// ─── LOOPS ────────────────────────────────────────────────
+let gameLoop      = null;
+let detectLoop    = null;
+let drawLoop      = null;
+
+// ─── GPS + COMPASS ────────────────────────────────────────
+let myGPS         = null;
+let deviceHeading = 0;    // degrees from north
+
+// ─── GUN.JS ───────────────────────────────────────────────
+let gun    = null;
+let myRef  = null;
+
+// ─── CANVAS ───────────────────────────────────────────────
+const overlay  = document.getElementById('overlay');
+const ctx      = overlay.getContext('2d');
+const camvideo = document.getElementById('camvideo');
+
+// ─── SIMULATION (solo) ────────────────────────────────────
+let simEnemies = [];
+let simAllies  = [];
+
+// ══════════════════════════════════════════════════════════
+// UTILITY
+// ══════════════════════════════════════════════════════════
+function resize() {
+  overlay.width  = window.innerWidth;
+  overlay.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function setLog(msg) { document.getElementById('log').textContent = msg; }
+
+function updateHUD() {
+  const hpEl = document.getElementById('hudHp');
+  hpEl.textContent = player.hp;
+  hpEl.className   = 'hud-value' + (player.hp <= 30 ? ' danger' : player.hp <= 60 ? ' warning' : '');
+
+  document.getElementById('hudAmmo').textContent  = player.ammo;
+  document.getElementById('hudKills').textContent = player.kills;
+
+  // HP bar
+  const bar = document.getElementById('hpBar');
+  bar.style.width      = player.hp + '%';
+  bar.style.background = player.hp > 60 ? C.green : player.hp > 30 ? C.gold : C.red;
+}
+
+function genId() { return Math.random().toString(36).substr(2, 9) + Date.now().toString(36); }
+
+function getPlayerData() {
+  player.name = (document.getElementById('nameInput').value.trim() || 'GHOST').toUpperCase().substring(0, 12);
+  player.team = document.getElementById('teamSelect').value;
+  if (!player.id) player.id = genId();
+}
+
+// ══════════════════════════════════════════════════════════
+// SCREEN NAVIGATION
+// ══════════════════════════════════════════════════════════
+function hostGame() {
+  getPlayerData();
+  isSolo    = false;
+  roomCode  = Math.floor(1000 + Math.random() * 9000).toString();
+  document.getElementById('roomCodeDisplay').textContent = roomCode;
+  document.getElementById('hudRoom').textContent         = 'ROOM ' + roomCode;
+  renderWaitingRoom();
+  showScreen('waiting');
+  initGun();
+  publishSelf();
+  subscribeRoom();
+}
+
+function joinGame() {
+  getPlayerData();
+  isSolo    = false;
+  roomCode  = document.getElementById('roomInput').value.trim().toUpperCase() || '0000';
+  document.getElementById('roomCodeDisplay').textContent = roomCode;
+  document.getElementById('hudRoom').textContent         = 'ROOM ' + roomCode;
+  renderWaitingRoom();
+  showScreen('waiting');
+  initGun();
+  publishSelf();
+  subscribeRoom();
+}
+
+function startSolo() {
+  getPlayerData();
+  isSolo    = true;
+  roomCode  = null;
+  document.getElementById('hudRoom').textContent = 'SOLO';
+  showScreen('game');
+  beginGame();
+}
+
+function launchMatch() {
+  showScreen('game');
+  beginGame();
+}
+
+function goLobby() {
+  cleanup();
+  showScreen('lobby');
+}
+
+// ══════════════════════════════════════════════════════════
+// WAITING ROOM UI
+// ══════════════════════════════════════════════════════════
+function renderWaitingRoom() {
+  const list = document.getElementById('playerList');
+  const all  = [{ name: player.name, team: player.team, id: player.id }, ...Object.values(roomPlayers)];
+  const uniq = [...new Map(all.map(p => [p.id, p])).values()];
+
+  list.innerHTML = uniq.map(p => {
+    const col = p.team === 'red' ? C.red : p.team === 'blue' ? C.blue : C.green;
+    return `<div class="player-row">
+      <span>${p.name}${p.id === player.id ? ' <span style="opacity:.4">(you)</span>' : ''}</span>
+      <span style="color:${col}">${p.team.toUpperCase()}</span>
+    </div>`;
+  }).join('') || '<div style="font-family:var(--mono);opacity:.4;padding:1rem;text-align:center">Waiting for players...</div>';
+}
+
+// ══════════════════════════════════════════════════════════
+// GUN.JS MULTIPLAYER
+// ══════════════════════════════════════════════════════════
+function initGun() {
+  if (gun) return;
+  try {
+    gun = Gun([
+      'https://gun-manhattan.herokuapp.com/gun',
+      'https://relay.peer.ooo/gun'
+    ]);
+  } catch(e) {
+    gun = Gun(); // offline fallback
+  }
+}
+
+function publishSelf() {
+  if (!gun || !roomCode) return;
+  myRef = gun.get('bz_' + roomCode).get(player.id);
+  myRef.put({
+    id:    player.id,
+    name:  player.name,
+    team:  player.team,
+    hp:    player.hp,
+    alive: true,
+    lat:   0,
+    lng:   0,
+    ts:    Date.now()
+  });
+}
+
+function subscribeRoom() {
+  if (!gun || !roomCode) return;
+  gun.get('bz_' + roomCode).map().on((data, key) => {
+    if (!data || key === player.id) return;
+    if (Date.now() - (data.ts || 0) > 60000) return; // ignore players gone >60s
+
+    roomPlayers[key] = data;
+    renderWaitingRoom();
+
+    // Listen for changes to MY hp (incoming damage from others)
+    if (key === '_dmg_' + player.id) {
+      const dmg = parseInt(data.v) || 0;
+      if (dmg > 0) applyIncomingDamage(dmg);
+    }
+  });
+
+  // Direct damage channel for this player
+  gun.get('bz_' + roomCode + '_dmg_' + player.id).on((data) => {
+    if (!data || !data.v) return;
+    applyIncomingDamage(parseInt(data.v) || 0);
+    // Reset so same value doesn't re-trigger
+    gun.get('bz_' + roomCode + '_dmg_' + player.id).put({ v: 0, ts: Date.now() });
+  });
+}
+
+function pushMyState() {
+  if (!myRef) return;
+  myRef.put({
+    id:    player.id,
+    name:  player.name,
+    team:  player.team,
+    hp:    player.hp,
+    alive: player.alive,
+    lat:   myGPS ? myGPS.lat : 0,
+    lng:   myGPS ? myGPS.lng : 0,
+    ts:    Date.now()
+  });
+}
+
+function dealDamageToPlayer(targetId, dmg) {
+  if (!gun || !roomCode) return;
+  gun.get('bz_' + roomCode + '_dmg_' + targetId).put({ v: dmg, ts: Date.now() });
+}
+
+function applyIncomingDamage(dmg) {
+  if (!player.alive || dmg <= 0) return;
+  player.hp = Math.max(0, player.hp - dmg);
+  setLog('You took ' + dmg + ' damage! HP: ' + player.hp);
+  updateHUD();
+  if (player.hp <= 0) {
+    player.alive = false;
+    endGame(false);
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// GPS + COMPASS
+// ══════════════════════════════════════════════════════════
+function startGPS() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.watchPosition(
+    pos => {
+      myGPS = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      pushMyState();
+      document.getElementById('hudMode').textContent = 'GPS LIVE';
+    },
+    () => {
+      document.getElementById('hudMode').textContent = 'GPS OFF';
+    },
+    { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
+  );
+}
+
+function startCompass() {
+  const handler = (e) => {
+    // iOS uses webkitCompassHeading; Android uses alpha (inverted)
+    if (typeof e.webkitCompassHeading === 'number') {
+      deviceHeading = e.webkitCompassHeading;
+    } else if (e.alpha !== null && e.alpha !== undefined) {
+      deviceHeading = (360 - e.alpha + 360) % 360;
+    }
+  };
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission()
+      .then(p => { if (p === 'granted') window.addEventListener('deviceorientation', handler); })
+      .catch(() => {});
+  } else {
+    window.addEventListener('deviceorientation', handler);
+  }
+}
+
+function calcBearing(lat1, lon1, lat2, lon2) {
+  const R2D = 180 / Math.PI;
+  const D2R = Math.PI / 180;
+  const dLon = (lon2 - lon1) * D2R;
+  lat1 *= D2R; lat2 *= D2R;
+  return ((Math.atan2(
+    Math.sin(dLon) * Math.cos(lat2),
+    Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon)
+  ) * R2D) + 360) % 360;
+}
+
+function calcDistance(lat1, lon1, lat2, lon2) {
+  const D2R = Math.PI / 180;
+  const dLat = (lat2 - lat1) * D2R;
+  const dLon = (lon2 - lon1) * D2R;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*D2R)*Math.cos(lat2*D2R)*Math.sin(dLon/2)**2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// Convert a GPS bearing to canvas X, given device compass heading.
+// Returns null if the bearing is outside camera FOV.
+function bearingToScreenX(bearing) {
+  const FOV = 75; // horizontal field of view (degrees)
+  let diff = ((bearing - deviceHeading + 540) % 360) - 180;
+  if (Math.abs(diff) > FOV / 2) return null;
+  return overlay.width / 2 + (diff / (FOV / 2)) * (overlay.width / 2);
+}
+
+// ══════════════════════════════════════════════════════════
+// CAMERA
+// ══════════════════════════════════════════════════════════
+async function initCamera() {
+  const loadEl = document.getElementById('loadingText');
+
+  loadEl.textContent = 'Requesting camera access...';
+
+  // Stop any existing stream
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+  }
+
+  // Enumerate cameras
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    allCameras = devices.filter(d => d.kind === 'videoinput');
+  } catch(e) { /* ignore */ }
+
+  // Try camera with progressive fallbacks
+  const isIOS     = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const isMobile  = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+  const attempts = [];
+
+  // 1. Rear camera (ideal for AR)
+  if (isMobile) {
+    attempts.push({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    attempts.push({ video: { facingMode: 'environment' }, audio: false });
+  }
+
+  // 2. Each specific camera by deviceId
+  allCameras.forEach(cam => {
+    attempts.push({ video: { deviceId: { exact: cam.deviceId } }, audio: false });
+  });
+
+  // 3. Any camera
+  attempts.push({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+  attempts.push({ video: true, audio: false });
+
+  let stream = null;
+  for (const c of attempts) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(c);
+      if (stream) break;
+    } catch(e) { /* try next */ }
+  }
+
+  if (stream) {
+    cameraStream    = stream;
+    camvideo.srcObject = stream;
+    // Crucial for iOS: set attributes directly
+    camvideo.setAttribute('playsinline', '');
+    camvideo.setAttribute('webkit-playsinline', '');
+    camvideo.muted = true;
+
+    // Wait for metadata + play
+    await new Promise((resolve) => {
+      camvideo.onloadedmetadata = () => camvideo.play().then(resolve).catch(resolve);
+      setTimeout(resolve, 5000); // hard timeout
+    });
+
+    setLog('Camera online. AI vision loading...');
+  } else {
+    setLog('Camera denied — simulation mode active.');
+    document.getElementById('hudMode').textContent = 'SIM MODE';
+  }
+
+  // ── Load COCO-SSD ──────────────────────────────────────
+  loadEl.textContent = 'Loading AI person detection...';
+  try {
+    if (typeof cocoSsd !== 'undefined') {
+      cocoModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+      setLog('AR vision active — room players highlighted only.');
+      document.getElementById('hudMode').textContent = 'AR LIVE';
+    } else {
+      throw new Error('cocoSsd not available');
+    }
+  } catch(err) {
+    console.warn('COCO-SSD unavailable:', err);
+    setLog('Simulation mode — no AI vision.');
+  }
+
+  // Hide loading overlay
+  document.getElementById('loadingOverlay').style.display = 'none';
+  startLoops();
+}
+
+// ── switchCamera ──────────────────────────────────────────
+async function switchCamera() {
+  if (!navigator.mediaDevices) { setLog('Camera API unavailable'); return; }
+
+  // Toggle facing mode
+  cameraFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+
+  if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+
+  // Try by deviceId cycling if we have them
+  if (allCameras.length > 1) {
+    cameraDevIdx = (cameraDevIdx + 1) % allCameras.length;
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: allCameras[cameraDevIdx].deviceId } },
+        audio: false
+      });
+      camvideo.srcObject = cameraStream;
+      await camvideo.play();
+      setLog('Switched camera');
+      return;
+    } catch(e) { /* fall through to facingMode */ }
+  }
+
+  // Fallback: toggle facingMode
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: cameraFacing },
+      audio: false
+    });
+    camvideo.srcObject = cameraStream;
+    await camvideo.play();
+    setLog('Camera: ' + cameraFacing);
+  } catch(e) {
+    setLog('Camera switch failed');
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// GAME START / LOOPS
+// ══════════════════════════════════════════════════════════
+function beginGame() {
+  player.hp    = 100;
+  player.ammo  = 10;
+  player.kills = 0;
+  player.alive = true;
+
+  document.getElementById('endOverlay').classList.remove('show');
+
+  if (isSolo) {
+    spawnSimulation();
+    document.getElementById('hudMode').textContent = 'SIMULATION';
+  } else {
+    startGPS();
+    startCompass();
+    pushMyState();
+    document.getElementById('hudMode').textContent = 'SCANNING...';
+  }
+
+  updateHUD();
+  initCamera();
+
+  clearInterval(gameLoop);
+  gameLoop = setInterval(gameTick, 1500);
+}
+
+function startLoops() {
+  clearInterval(detectLoop);
+  clearInterval(drawLoop);
+
+  // AI detection: every 400ms (balanced for mobile performance)
+  detectLoop = setInterval(runDetection, 400);
+
+  // Draw frame: ~30fps
+  drawLoop = setInterval(drawFrame, 33);
+}
+
+function gameTick() {
+  if (!player.alive) return;
+
+  if (isSolo) {
+    // Sim enemies attack and move
+    simEnemies.forEach(e => {
+      if (!e.alive) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      e.x = Math.max(40, Math.min(W-40, e.x + (Math.random()-.5)*50));
+      e.y = Math.max(80, Math.min(H*.62, e.y + (Math.random()-.5)*40));
+      if (Math.random() < 0.22) {
+        const dmg = Math.floor(Math.random()*12) + 4;
+        applyIncomingDamage(dmg); // reuse same handler
+        setLog(e.name + ' hit you for ' + dmg + '!');
+      }
+    });
+    simAllies.forEach(a => {
+      a.x = Math.max(40, Math.min(window.innerWidth-40,  a.x + (Math.random()-.5)*20));
+      a.y = Math.max(80, Math.min(window.innerHeight*.62, a.y + (Math.random()-.5)*20));
+    });
+  }
+
+  pushMyState();
+}
+
+// ══════════════════════════════════════════════════════════
+// AI DETECTION
+// ══════════════════════════════════════════════════════════
+async function runDetection() {
+  if (!cocoModel) return;
+  if (!camvideo || camvideo.paused || camvideo.ended || camvideo.readyState < 2) return;
+  try {
+    const preds = await cocoModel.detect(camvideo);
+    // ONLY keep "person" detections above 40% confidence
+    detections = preds.filter(p => p.class === 'person' && p.score > 0.40);
+  } catch(e) { /* silent */ }
+}
+
+// ══════════════════════════════════════════════════════════
+// DRAWING
+// ══════════════════════════════════════════════════════════
+function drawFrame() {
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+  if (isSolo) {
+    // ── Solo: highlight all detected persons as enemies ────
+    drawCocoDetections(null); // null = all = enemies (red)
+    // Draw simulation targets
+    simEnemies.forEach(e => { if (e.alive) drawBox(e.x, e.y, 80, 120, C.red,   e.name, e.hp); });
+    simAllies.forEach(a =>                  drawBox(a.x, a.y, 70, 110, C.green, a.name, 100));
+  } else {
+    // ── Multiplayer: only show room players, ignore strangers ─
+    drawRoomPlayersFromGPS();
+    drawCocoDetectionsForRoomPlayers();
+  }
+}
+
+// Draw a detected person bounding box tied to a specific room player
+function drawCocoDetectionsForRoomPlayers() {
+  if (!detections.length || !Object.keys(roomPlayers).length) return;
+
+  const vw = camvideo.videoWidth  || overlay.width;
+  const vh = camvideo.videoHeight || overlay.height;
+  const scaleX = overlay.width  / vw;
+  const scaleY = overlay.height / vh;
+
+  detections.forEach(det => {
+    const [bx, by, bw, bh] = det.bbox;
+    const sx = bx * scaleX;
+    const sy = by * scaleY;
+    const sw = bw * scaleX;
+    const sh = bh * scaleY;
+    const centerX = sx + sw / 2;
+
+    // Try to match this detection to a room player by GPS bearing
+    let matched = null;
+
+    if (myGPS) {
+      let bestDist = Infinity;
+      Object.values(roomPlayers).forEach(rp => {
+        if (!rp.alive || !rp.lat || !rp.lng) return;
+        const bearing  = calcBearing(myGPS.lat, myGPS.lng, rp.lat, rp.lng);
+        const screenX  = bearingToScreenX(bearing);
+        if (screenX === null) return;
+        const dist = Math.abs(screenX - centerX);
+        if (dist < bestDist && dist < sw * 0.8) {
+          bestDist = dist;
+          matched  = rp;
+        }
+      });
+    } else {
+      // No GPS: match detections sequentially to room players (best-effort)
+      const players = Object.values(roomPlayers).filter(p => p.alive);
+      if (players.length > 0) {
+        matched = players[Math.floor(centerX / overlay.width * players.length)] || players[0];
+      }
+    }
+
+    // *** KEY RULE: only draw if a room player is matched ***
+    if (!matched) return;
+
+    const color = matched.team === player.team ? C.green : C.red;
+    drawDetectionBox(sx, sy, sw, sh, color, matched.name, matched.hp);
+  });
+}
+
+// In solo mode: draw all detected people as enemies (red)
+function drawCocoDetections(forcedColor) {
+  if (!detections.length) return;
+  const vw = camvideo.videoWidth  || overlay.width;
+  const vh = camvideo.videoHeight || overlay.height;
+  const scaleX = overlay.width  / vw;
+  const scaleY = overlay.height / vh;
+
+  detections.forEach(det => {
+    const [bx, by, bw, bh] = det.bbox;
+    drawDetectionBox(
+      bx * scaleX, by * scaleY, bw * scaleX, bh * scaleY,
+      forcedColor || C.red, 'ENEMY', 100
+    );
+  });
+}
+
+function drawDetectionBox(sx, sy, sw, sh, color, name, hp) {
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur  = 14;
+
+  // Main border
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = 2.5;
+  ctx.strokeRect(sx, sy, sw, sh);
+
+  // Corner accents (thicker)
+  const cs = Math.min(sw, sh) * 0.2;
+  ctx.lineWidth = 4;
+  ctx.shadowBlur = 20;
+  [[sx,sy,1,1],[sx+sw,sy,-1,1],[sx,sy+sh,1,-1],[sx+sw,sy+sh,-1,-1]].forEach(([x,y,dx,dy]) => {
+    ctx.beginPath();
+    ctx.moveTo(x + dx*cs, y); ctx.lineTo(x, y); ctx.lineTo(x, y + dy*cs);
+    ctx.stroke();
+  });
+
+  // Label background
+  ctx.shadowBlur = 0;
+  ctx.fillStyle  = 'rgba(0,0,0,0.72)';
+  ctx.fillRect(sx, sy - 24, sw, 22);
+
+  // Name
+  ctx.fillStyle  = color;
+  ctx.font       = 'bold 12px "Share Tech Mono", monospace';
+  ctx.textAlign  = 'left';
+  ctx.fillText(name.substring(0, 14), sx + 5, sy - 7);
+
+  // HP bar below box
+  if (hp !== null) {
+    const barW = (Math.max(0, hp) / 100) * sw;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(sx, sy + sh + 2, sw, 5);
+    ctx.fillStyle = color;
+    ctx.fillRect(sx, sy + sh + 2, barW, 5);
+  }
+
+  ctx.restore();
+}
+
+// GPS-based player marker (when no camera match — shows as radar blip)
+function drawRoomPlayersFromGPS() {
+  if (!myGPS) return;
+  const now = Date.now();
+
+  Object.values(roomPlayers).forEach(rp => {
+    if (!rp.alive || !rp.lat || !rp.lng) return;
+    if (!rp.ts || now - rp.ts > 15000) return; // stale
+
+    const bearing = calcBearing(myGPS.lat, myGPS.lng, rp.lat, rp.lng);
+    const screenX = bearingToScreenX(bearing);
+    if (screenX === null) return;
+
+    const dist    = calcDistance(myGPS.lat, myGPS.lng, rp.lat, rp.lng);
+    if (dist > 300) return; // only within 300m
+
+    const boxSize = Math.max(50, 130 * (1 - dist / 300));
+    const screenY = overlay.height * 0.4;
+    const color   = rp.team === player.team ? C.green : C.red;
+
+    drawDetectionBox(screenX - boxSize/2, screenY - boxSize/2, boxSize, boxSize, color, rp.name, rp.hp);
+
+    // Distance label
+    ctx.save();
+    ctx.fillStyle = 'rgba(200,255,212,0.6)';
+    ctx.font      = '10px "Share Tech Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(Math.round(dist) + 'm', screenX, screenY + boxSize/2 + 16);
+    ctx.restore();
+  });
+}
+
+// Simple box (simulation)
+function drawBox(x, y, w, h, color, name, hp) {
+  drawDetectionBox(x - w/2, y - h/2, w, h, color, name, hp);
+}
+
+// ══════════════════════════════════════════════════════════
+// ACTIONS
+// ══════════════════════════════════════════════════════════
+function shoot() {
+  if (!player.alive) return;
+  if (player.ammo <= 0) { setLog('OUT OF AMMO — tap RELOAD'); flashFX(false); return; }
+
+  player.ammo--;
+  updateHUD();
+
+  const cx = overlay.width / 2, cy = overlay.height / 2;
+
+  if (isSolo) {
+    // Check if any sim enemy is in crosshair area
+    const target = simEnemies.find(e => {
+      if (!e.alive) return false;
+      return Math.abs(e.x - cx) < 60 && Math.abs(e.y - cy) < 80;
+    }) || simEnemies.find(e => e.alive); // fallback: nearest alive enemy
+
+    if (!target) { setLog('Victory! All enemies eliminated! 🏆'); flashFX(false); return; }
+
+    const inSight = Math.abs(target.x - cx) < 60 && Math.abs(target.y - cy) < 80;
+    const dmg     = inSight ? (Math.floor(Math.random()*35) + 25) : (Math.floor(Math.random()*15) + 5);
+
+    target.hp -= dmg;
+    if (target.hp <= 0) {
+      target.alive = false;
+      player.kills++;
+      setLog(target.name + ' ELIMINATED ☠️  Kills: ' + player.kills);
+      flashFX(true);
+    } else {
+      setLog('Hit ' + target.name + ' for ' + dmg + ' DMG (HP: ' + target.hp + ')');
+      flashFX(inSight);
+    }
+    updateHUD();
+  } else {
+    // Multiplayer: check COCO + GPS for crosshair hit
+    let hitPlayer = null;
+
+    // 1. Check if a detected person bounding box contains crosshair
+    if (detections.length) {
+      const vw = camvideo.videoWidth  || overlay.width;
+      const vh = camvideo.videoHeight || overlay.height;
+      const sx = overlay.width  / vw;
+      const sy = overlay.height / vh;
+
+      for (const det of detections) {
+        const [bx, by, bw, bh] = det.bbox;
+        const left = bx*sx, top = by*sy, right = (bx+bw)*sx, bottom = (by+bh)*sy;
+        if (cx >= left && cx <= right && cy >= top && cy <= bottom) {
+          // Find enemy player closest bearing to center of this detection
+          const detCenterX = (left + right) / 2;
+          let bestDist = Infinity;
+          Object.values(roomPlayers).forEach(rp => {
+            if (!rp.alive || rp.team === player.team) return;
+            if (myGPS && rp.lat) {
+              const bearing  = calcBearing(myGPS.lat, myGPS.lng, rp.lat, rp.lng);
+              const screenX  = bearingToScreenX(bearing);
+              if (screenX === null) return;
+              const d = Math.abs(screenX - detCenterX);
+              if (d < bestDist) { bestDist = d; hitPlayer = rp; }
+            } else if (!hitPlayer) {
+              hitPlayer = rp; // no GPS: first enemy
+            }
+          });
+          break;
+        }
+      }
+    }
+
+    // 2. GPS bearing fallback
+    if (!hitPlayer && myGPS) {
+      Object.values(roomPlayers).forEach(rp => {
+        if (!rp.alive || rp.team === player.team || !rp.lat) return;
+        const bearing = calcBearing(myGPS.lat, myGPS.lng, rp.lat, rp.lng);
+        const screenX = bearingToScreenX(bearing);
+        if (screenX !== null && Math.abs(screenX - cx) < 80) hitPlayer = rp;
+      });
+    }
+
+    if (hitPlayer) {
+      const dmg = Math.floor(Math.random()*35) + 20;
+      dealDamageToPlayer(hitPlayer.id, dmg);
+      player.kills++;
+      setLog('Hit ' + hitPlayer.name + ' for ' + dmg + ' DMG!');
+      flashFX(true);
+      updateHUD();
+    } else {
+      setLog('Missed! Aim at an enemy.');
+      flashFX(false);
+    }
+  }
+}
+
+function reloadAmmo() {
+  player.ammo = 10;
+  setLog('Reloaded — 10 rounds ready');
+  updateHUD();
+}
+
+function heal() {
+  if (player.hp >= 100) { setLog('Already at full health'); return; }
+  player.hp = Math.min(100, player.hp + 25);
+  setLog('Healed +25 HP → ' + player.hp);
+  updateHUD();
+}
+
+function scan() {
+  // Visual pulse ring
+  const ring = document.createElement('div');
+  ring.className = 'scan-ring';
+  document.getElementById('game').appendChild(ring);
+  setTimeout(() => ring.remove(), 1300);
+
+  if (isSolo) {
+    setLog('Scan: ' + simEnemies.filter(e => e.alive).length + ' enemies remaining');
+  } else {
+    const alive   = Object.values(roomPlayers).filter(p => p.alive);
+    const enemies = alive.filter(p => p.team !== player.team);
+    const allies  = alive.filter(p => p.team === player.team);
+    setLog('Room: ' + alive.length + ' players — ' + enemies.length + ' enemies, ' + allies.length + ' allies');
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// SHOOT FLASH FX
+// ══════════════════════════════════════════════════════════
+function flashFX(hit) {
+  const gx = overlay.width / 2;
+  const gy = overlay.height;
+
+  ctx.save();
+  const grad = ctx.createRadialGradient(gx, gy - 60, 5, gx, gy - 60, 180);
+  grad.addColorStop(0,   'rgba(255,255,220,0.95)');
+  grad.addColorStop(0.2, 'rgba(255,200,80,0.85)');
+  grad.addColorStop(0.6, 'rgba(255,100,0,0.5)');
+  grad.addColorStop(1,   'rgba(255,0,0,0)');
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(gx - 50, gy);
+  ctx.lineTo(gx + 50, gy);
+  ctx.lineTo(gx, gy - 260);
+  ctx.closePath();
+  ctx.fill();
+
+  if (hit) {
+    // Big hit X
+    ctx.strokeStyle = C.white;
+    ctx.lineWidth   = 5;
+    ctx.shadowColor = C.white;
+    ctx.shadowBlur  = 20;
+    const hx = overlay.width/2, hy = overlay.height/2, s = 30;
+    ctx.beginPath();
+    ctx.moveTo(hx-s, hy-s); ctx.lineTo(hx+s, hy+s);
+    ctx.moveTo(hx+s, hy-s); ctx.lineTo(hx-s, hy+s);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Clear FX after 120ms
+  setTimeout(() => { if (!document.getElementById('endOverlay').classList.contains('show')) drawFrame(); }, 120);
+}
+
+// ══════════════════════════════════════════════════════════
+// SIMULATION SPAWN
+// ══════════════════════════════════════════════════════════
+function spawnSimulation() {
+  simEnemies = [];
+  simAllies  = [];
+  const W = window.innerWidth, H = window.innerHeight;
+  for (let i = 0; i < 4; i++) {
+    simEnemies.push({
+      x: 80 + Math.random()*(W-160), y: 100 + Math.random()*(H*.45),
+      hp: 100, alive: true, name: 'ENEMY_' + (i+1)
+    });
+  }
+  for (let j = 0; j < 2; j++) {
+    simAllies.push({
+      x: 80 + Math.random()*(W-160), y: 100 + Math.random()*(H*.45),
+      name: 'ALLY_' + (j+1)
+    });
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// END GAME
+// ══════════════════════════════════════════════════════════
+function endGame(victory) {
+  clearInterval(gameLoop);
+  clearInterval(detectLoop);
+  clearInterval(drawLoop);
+
+  const el    = document.getElementById('endOverlay');
+  const title = document.getElementById('endTitle');
+  const stats = document.getElementById('endStats');
+
+  title.textContent  = victory ? '⚡ VICTORY' : '💀 ELIMINATED';
+  title.style.color  = victory ? C.green : C.red;
+  stats.innerHTML    = 'KILLS: ' + player.kills + '&nbsp;&nbsp;·&nbsp;&nbsp;HP: ' + player.hp + '<br>' +
+                       (roomCode ? 'ROOM: ' + roomCode : 'SOLO MATCH');
+  el.classList.add('show');
+}
+
+// ══════════════════════════════════════════════════════════
+// CLEANUP
+// ══════════════════════════════════════════════════════════
+function cleanup() {
+  clearInterval(gameLoop);
+  clearInterval(detectLoop);
+  clearInterval(drawLoop);
+
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+  }
+
+  if (myRef) {
+    myRef.put({ alive: false, ts: Date.now() });
+    myRef = null;
+  }
+
+  detections = [];
+  simEnemies = [];
+  simAllies  = [];
+  roomPlayers = {};
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  document.getElementById('loadingOverlay').style.display = '';
+  document.getElementById('endOverlay').classList.remove('show');
+  document.getElementById('playerList').innerHTML = '';
+}
+
+// ══════════════════════════════════════════════════════════
+// EXPOSE GLOBALS
+// ══════════════════════════════════════════════════════════
+window.hostGame     = hostGame;
+window.joinGame     = joinGame;
+window.startSolo    = startSolo;
+window.launchMatch  = launchMatch;
+window.goLobby      = goLobby;
+window.shoot        = shoot;
+window.reloadAmmo   = reloadAmmo;
+window.heal         = heal;
+window.scan         = scan;
+window.switchCamera = switchCamera;
+</script>
+</body>
+</html>
