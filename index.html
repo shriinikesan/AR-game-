@@ -142,16 +142,24 @@ select option { background: var(--surf); }
 }
 
 /* ── GAME SCREEN ─────────────────────────────────────── */
-#game { position: relative; background: #000; overflow: hidden; justify-content: flex-start; padding: 0; }
-
-#camvideo, #overlay {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+/* position:fixed fills true visual viewport — 100vh on Android includes browser chrome */
+#game {
+  position: fixed !important;
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: 100%; height: 100%;
+  background: #000; overflow: hidden;
+  justify-content: flex-start; padding: 0;
 }
-#overlay { pointer-events: none; z-index: 2; }
+#camvideo {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover; z-index: 1; background: #000;
+}
+#overlay {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none; z-index: 2;
+}
 
 /* ── HUD ────────────────────────────────────────────── */
 #hud {
@@ -164,7 +172,7 @@ select option { background: var(--surf); }
   font-family: var(--mono);
   font-size: clamp(13px, 3.5vw, 16px);
   background: linear-gradient(to bottom, rgba(0,0,0,.8) 0%, rgba(0,0,0,0) 100%);
-  z-index: 3;
+  z-index: 50;
 }
 .hud-block { display: flex; flex-direction: column; gap: 2px; }
 .hud-label { font-size: 10px; opacity: .5; letter-spacing: .15em; }
@@ -223,13 +231,12 @@ select option { background: var(--surf); }
 #controls {
   position: absolute;
   bottom: 0; left: 0; right: 0;
-  /* key fix: safe-area-inset-bottom for notched phones */
-  padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  padding: 10px 10px calc(14px + env(safe-area-inset-bottom, 0px));
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
-  background: linear-gradient(to top, rgba(0,0,0,.92) 0%, rgba(0,0,0,.0) 100%);
-  z-index: 4; /* above overlay */
+  gap: 6px;
+  background: linear-gradient(to top, rgba(0,0,0,.95) 0%, rgba(0,0,0,.0) 100%);
+  z-index: 100;
 }
 .ctrl-btn {
   background: rgba(10, 20, 12, 0.75);
@@ -305,7 +312,25 @@ select option { background: var(--surf); }
 #endTitle { font-family: var(--mono); font-size: clamp(2rem, 8vw, 3.5rem); }
 #endStats { font-family: var(--mono); font-size: 14px; color: var(--dim); line-height: 2; text-align: center; }
 
-/* Scan pulse ring */
+/* ── LANDSCAPE: buttons move to RIGHT side ─────────────── */
+@media (orientation: landscape) {
+  #controls {
+    top: 0; bottom: 0; right: 0; left: auto;
+    width: 80px;
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(5, 1fr);
+    padding: 8px 6px 8px calc(6px + env(safe-area-inset-right, 0px));
+    background: linear-gradient(to left, rgba(0,0,0,.92), transparent);
+  }
+  #hpBarWrap {
+    bottom: auto; top: calc(env(safe-area-inset-top,0px) + 56px);
+    left: auto; right: 86px; width: 5px; height: 60%;
+    flex-direction: column;
+  }
+  #hpBar { width: 5px !important; height: 100%; }
+  #log { bottom: 10px; right: 90px; left: auto; transform: none; }
+  #crosshair { left: calc(50% - 40px); }
+}
 @keyframes scanRing {
   0%   { transform: translate(-50%,-50%) scale(0.3); opacity: 1; }
   100% { transform: translate(-50%,-50%) scale(3);   opacity: 0; }
@@ -419,11 +444,29 @@ select option { background: var(--surf); }
     </button>
   </div>
 
-  <!-- Loading overlay (shown while camera + AI loads) -->
-  <div id="loadingOverlay">
-    <div class="logo" style="font-size:1.6rem">BATTLEZONE.AR</div>
+  <!-- Small camera error banner (non-blocking — canvas stays visible) -->
+  <div id="camBanner" style="display:none;position:absolute;bottom:90px;left:8px;right:8px;
+    z-index:50;background:rgba(0,0,0,0.92);border:1px solid #ff3344;border-radius:10px;
+    padding:10px 14px;font-family:'Share Tech Mono',monospace;font-size:11px;
+    color:#ff3344;text-align:center;line-height:1.8;">
+    <div id="camBannerMsg">📷 Camera access denied</div>
+    <div style="display:flex;gap:8px;margin-top:8px;justify-content:center;flex-wrap:wrap;">
+      <button onclick="requestCamera()" style="font-family:'Share Tech Mono',monospace;
+        padding:8px 16px;border-radius:7px;border:1px solid #ff3344;
+        background:rgba(255,51,68,0.15);color:#ff3344;cursor:pointer;
+        touch-action:manipulation;font-size:11px;">🔄 TRY AGAIN</button>
+      <button onclick="skipCamera()" style="font-family:'Share Tech Mono',monospace;
+        padding:8px 16px;border-radius:7px;border:1px solid rgba(200,255,212,0.2);
+        background:transparent;color:rgba(200,255,212,0.5);cursor:pointer;
+        touch-action:manipulation;font-size:11px;">▶ NO CAMERA</button>
+    </div>
+  </div>
+
+  <!-- Loading overlay (AI model only — shown briefly) -->
+  <div id="loadingOverlay" style="display:none;position:absolute;inset:0;z-index:15;
+    background:rgba(0,0,0,0.5);flex-direction:column;align-items:center;justify-content:center;gap:14px;">
     <div class="spinner"></div>
-    <div id="loadingText">Initializing...</div>
+    <div id="loadingText" style="font-family:'Share Tech Mono',monospace;font-size:12px;color:rgba(200,255,212,0.6);">Loading AI vision...</div>
   </div>
 
   <!-- End-game overlay -->
@@ -746,90 +789,137 @@ function bearingToScreenX(bearing) {
 // ══════════════════════════════════════════════════════════
 // CAMERA
 // ══════════════════════════════════════════════════════════
-async function initCamera() {
-  const loadEl = document.getElementById('loadingText');
+function initCamera() {
+  // Auto-request immediately — same as desktop behaviour
+  requestCamera();
+}
 
-  loadEl.textContent = 'Requesting camera access...';
+async function requestCamera() {
+  hideCamBanner();
+  setLog('Requesting camera...');
 
-  // Stop any existing stream
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(t => t.stop());
-    cameraStream = null;
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+
+  // Detect insecure context (content:// or file:// in Chrome blocks getUserMedia)
+  const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  const isChrome = /Chrome/.test(navigator.userAgent) && !/Firefox/.test(navigator.userAgent);
+  const isContentUrl = location.href.startsWith('content:') || location.href.startsWith('file:');
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showCamBanner('📷 Camera API not available in this browser.<br><span style="color:rgba(200,255,212,0.5)">Try Firefox on Android — it supports camera from local files.</span>');
+    setLog('No camera API — sim mode.');
+    return;
   }
-
-  // Enumerate cameras
-  try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    allCameras = devices.filter(d => d.kind === 'videoinput');
-  } catch(e) { /* ignore */ }
-
-  // Try camera with progressive fallbacks
-  const isIOS     = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const isMobile  = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-  const attempts = [];
-
-  // 1. Rear camera (ideal for AR)
-  if (isMobile) {
-    attempts.push({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
-    attempts.push({ video: { facingMode: 'environment' }, audio: false });
-  }
-
-  // 2. Each specific camera by deviceId
-  allCameras.forEach(cam => {
-    attempts.push({ video: { deviceId: { exact: cam.deviceId } }, audio: false });
-  });
-
-  // 3. Any camera
-  attempts.push({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
-  attempts.push({ video: true, audio: false });
 
   let stream = null;
+  let lastErr = '';
+
+  const attempts = [
+    { video: { facingMode: 'environment' }, audio: false },
+    { video: { facingMode: 'user' },        audio: false },
+    { video: true,                           audio: false }
+  ];
+
   for (const c of attempts) {
     try {
       stream = await navigator.mediaDevices.getUserMedia(c);
       if (stream) break;
-    } catch(e) { /* try next */ }
-  }
-
-  if (stream) {
-    cameraStream    = stream;
-    camvideo.srcObject = stream;
-    // Crucial for iOS: set attributes directly
-    camvideo.setAttribute('playsinline', '');
-    camvideo.setAttribute('webkit-playsinline', '');
-    camvideo.muted = true;
-
-    // Wait for metadata + play
-    await new Promise((resolve) => {
-      camvideo.onloadedmetadata = () => camvideo.play().then(resolve).catch(resolve);
-      setTimeout(resolve, 5000); // hard timeout
-    });
-
-    setLog('Camera online. AI vision loading...');
-  } else {
-    setLog('Camera denied — simulation mode active.');
-    document.getElementById('hudMode').textContent = 'SIM MODE';
-  }
-
-  // ── Load COCO-SSD ──────────────────────────────────────
-  loadEl.textContent = 'Loading AI person detection...';
-  try {
-    if (typeof cocoSsd !== 'undefined') {
-      cocoModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
-      setLog('AR vision active — room players highlighted only.');
-      document.getElementById('hudMode').textContent = 'AR LIVE';
-    } else {
-      throw new Error('cocoSsd not available');
+    } catch(e) {
+      lastErr = e.name;
+      console.warn('cam:', e.name, e.message);
     }
-  } catch(err) {
-    console.warn('COCO-SSD unavailable:', err);
-    setLog('Simulation mode — no AI vision.');
   }
 
-  // Hide loading overlay
-  document.getElementById('loadingOverlay').style.display = 'none';
-  startLoops();
+  if (!stream) {
+    // NotAllowedError on Chrome + content:// = insecure context block
+    if ((lastErr === 'NotAllowedError' || lastErr === 'PermissionDeniedError') && isContentUrl && isChrome) {
+      showCamBanner('📷 Chrome blocks camera for local files.<br><span style="color:rgba(200,255,212,0.6)">Open this file in <b style="color:#44aaff">Firefox</b> for Android to get camera access. Firefox allows it from downloads.</span>');
+    } else if (lastErr === 'NotAllowedError' || lastErr === 'PermissionDeniedError') {
+      showCamBanner('📷 Camera permission denied.<br><span style="color:rgba(200,255,212,0.5)">Go to browser Settings → Site permissions → Camera → Allow, then tap TRY AGAIN.</span>');
+    } else {
+      showCamBanner('📷 No camera found (' + lastErr + ').<br>Playing in simulation mode.');
+    }
+    setLog('No camera — sim mode active.');
+    return;
+  }
+
+  // ── Stream obtained — attach to video ─────────────────
+  cameraStream = stream;
+
+  // Try srcObject first (modern), fall back to createObjectURL (older Android)
+  try {
+    camvideo.srcObject = stream;
+  } catch(e) {
+    try {
+      camvideo.src = URL.createObjectURL(stream);
+    } catch(e2) { /* last resort: already failed */ }
+  }
+
+  camvideo.muted  = true;
+  camvideo.volume = 0;
+  camvideo.setAttribute('playsinline', '');
+  camvideo.setAttribute('webkit-playsinline', '');
+
+  // Wait for canplay (more reliable than loadedmetadata on Android)
+  await new Promise(resolve => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    camvideo.oncanplay      = finish;
+    camvideo.oncanplaythrough = finish;
+    camvideo.onloadedmetadata = () => camvideo.play().catch(()=>{});
+    setTimeout(finish, 4000); // hard timeout
+    camvideo.load();
+  });
+
+  try { await camvideo.play(); } catch(e) {}
+
+  // Heartbeat — keep playing if Android pauses it
+  const hb = setInterval(() => {
+    if (!cameraStream) { clearInterval(hb); return; }
+    if (camvideo.paused || camvideo.ended) camvideo.play().catch(()=>{});
+  }, 1200);
+
+  hideCamBanner();
+  setLog('Camera active ✓');
+  document.getElementById('hudMode').textContent = 'CAM LIVE';
+
+  // Enumerate cams for switchCamera
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    allCameras = devs.filter(d => d.kind === 'videoinput');
+  } catch(e) {}
+
+  // Load COCO-SSD in background (non-blocking)
+  if (typeof cocoSsd !== 'undefined') {
+    const loEl = document.getElementById('loadingOverlay');
+    if (loEl) { loEl.style.display = 'flex'; }
+    cocoSsd.load({ base: 'lite_mobilenet_v2' }).then(model => {
+      cocoModel = model;
+      if (loEl) loEl.style.display = 'none';
+      setLog('AR vision active.');
+      document.getElementById('hudMode').textContent = 'AR LIVE';
+    }).catch(() => {
+      if (loEl) loEl.style.display = 'none';
+    });
+  }
+}
+
+function showCamBanner(msg) {
+  const b = document.getElementById('camBanner');
+  const m = document.getElementById('camBannerMsg');
+  if (!b) return;
+  m.innerHTML = msg;
+  b.style.display = 'block';
+}
+function hideCamBanner() {
+  const b = document.getElementById('camBanner');
+  if (b) b.style.display = 'none';
+}
+
+function skipCamera() {
+  hideCamBanner();
+  document.getElementById('hudMode').textContent = 'SIM MODE';
+  setLog('Running without camera.');
 }
 
 // ── switchCamera ──────────────────────────────────────────
@@ -892,6 +982,7 @@ function beginGame() {
   }
 
   updateHUD();
+  startLoops(); // start draw loop immediately so boxes appear before COCO loads
   initCamera();
 
   clearInterval(gameLoop);
@@ -950,126 +1041,186 @@ async function runDetection() {
 // ══════════════════════════════════════════════════════════
 // DRAWING
 // ══════════════════════════════════════════════════════════
+// Track which box crosshair is currently over (for IR scope)
+let scopeTarget = null;
+
 function drawFrame() {
   ctx.clearRect(0, 0, overlay.width, overlay.height);
+  scopeTarget = null;
+
+  const cx = overlay.width / 2, cy = overlay.height / 2;
 
   if (isSolo) {
-    // ── Solo: highlight all detected persons as enemies ────
-    drawCocoDetections(null); // null = all = enemies (red)
-    // Draw simulation targets
-    simEnemies.forEach(e => { if (e.alive) drawBox(e.x, e.y, 80, 120, C.red,   e.name, e.hp); });
-    simAllies.forEach(a =>                  drawBox(a.x, a.y, 70, 110, C.green, a.name, 100));
+    drawCocoDetections(null);
+    simEnemies.forEach(e => {
+      if (!e.alive) return;
+      const inScope = pointInBox(cx, cy, e.x-50, e.y-75, 100, 150);
+      if (inScope) scopeTarget = { color: C.red, name: e.name };
+      drawBox(e.x, e.y, 100, 150, C.red, e.name, e.hp, inScope);
+    });
+    simAllies.forEach(a => {
+      const inScope = pointInBox(cx, cy, a.x-45, a.y-70, 90, 140);
+      drawBox(a.x, a.y, 90, 140, C.green, a.name, 100, inScope);
+    });
   } else {
-    // ── Multiplayer: only show room players, ignore strangers ─
     drawRoomPlayersFromGPS();
-    drawCocoDetectionsForRoomPlayers();
+    drawCocoDetectionsForRoomPlayers(cx, cy);
   }
+
+  drawIRScope(cx, cy);
 }
 
-// Draw a detected person bounding box tied to a specific room player
-function drawCocoDetectionsForRoomPlayers() {
-  if (!detections.length || !Object.keys(roomPlayers).length) return;
+function pointInBox(px, py, bx, by, bw, bh) {
+  return px >= bx && px <= bx+bw && py >= by && py <= by+bh;
+}
+
+// Draw IR infrared scope ray when locked onto a target
+function drawIRScope(cx, cy) {
+  if (!scopeTarget) return;
+  const color = scopeTarget.color;
+  ctx.save();
+  ctx.globalAlpha = 0.55 + 0.1 * Math.sin(Date.now() / 100);
+
+  // Pulsing outer ring
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = 2;
+  ctx.shadowColor = color;
+  ctx.shadowBlur  = 18;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 38, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Cross laser lines
+  ctx.lineWidth = 1.5;
+  [[cx-70,cy,cx-42,cy],[cx+42,cy,cx+70,cy],[cx,cy-70,cx,cy-42],[cx,cy+42,cx,cy+70]].forEach(([x1,y1,x2,y2]) => {
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  });
+
+  // Rotating tick marks
+  const now = Date.now() / 600;
+  for (let i = 0; i < 4; i++) {
+    const angle = now + (i * Math.PI / 2);
+    const r1 = 42, r2 = 52;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(angle)*r1, cy + Math.sin(angle)*r1);
+    ctx.lineTo(cx + Math.cos(angle)*r2, cy + Math.sin(angle)*r2);
+    ctx.stroke();
+  }
+
+  // LOCKED label
+  ctx.globalAlpha = 0.9;
+  ctx.shadowBlur = 0;
+  ctx.fillStyle  = color;
+  ctx.font       = 'bold 10px "Share Tech Mono", monospace';
+  ctx.textAlign  = 'center';
+  ctx.fillText('◉ LOCKED', cx, cy - 48);
+  ctx.restore();
+}
+
+// Multiplayer: assign each detected person to a room player, green=ally red=enemy
+function drawCocoDetectionsForRoomPlayers(cx, cy) {
+  const rp_list = Object.values(roomPlayers).filter(p => p.alive);
+
+  // Always draw room players even without COCO (GPS-only boxes)
+  drawRoomPlayersFromGPS();
+
+  if (!detections.length || !rp_list.length) return;
 
   const vw = camvideo.videoWidth  || overlay.width;
   const vh = camvideo.videoHeight || overlay.height;
   const scaleX = overlay.width  / vw;
   const scaleY = overlay.height / vh;
 
-  detections.forEach(det => {
+  // Sort detections left→right, sort room players left→right by GPS bearing (or index)
+  const scaled = detections.map(det => {
     const [bx, by, bw, bh] = det.bbox;
-    const sx = bx * scaleX;
-    const sy = by * scaleY;
-    const sw = bw * scaleX;
-    const sh = bh * scaleY;
-    const centerX = sx + sw / 2;
+    return { sx: bx*scaleX, sy: by*scaleY, sw: bw*scaleX, sh: bh*scaleY };
+  }).sort((a,b) => a.sx - b.sx);
 
-    // Try to match this detection to a room player by GPS bearing
-    let matched = null;
+  // Sort room players by GPS bearing if available, otherwise by join order
+  let sorted_rp = [...rp_list];
+  if (myGPS) {
+    sorted_rp = sorted_rp.map(rp => {
+      if (!rp.lat || !rp.lng) return { rp, sx: overlay.width/2 };
+      const bearing = calcBearing(myGPS.lat, myGPS.lng, rp.lat, rp.lng);
+      return { rp, sx: bearingToScreenX(bearing) || overlay.width/2 };
+    }).sort((a,b) => a.sx - b.sx).map(x => x.rp);
+  }
 
-    if (myGPS) {
-      let bestDist = Infinity;
-      Object.values(roomPlayers).forEach(rp => {
-        if (!rp.alive || !rp.lat || !rp.lng) return;
-        const bearing  = calcBearing(myGPS.lat, myGPS.lng, rp.lat, rp.lng);
-        const screenX  = bearingToScreenX(bearing);
-        if (screenX === null) return;
-        const dist = Math.abs(screenX - centerX);
-        if (dist < bestDist && dist < sw * 0.8) {
-          bestDist = dist;
-          matched  = rp;
-        }
-      });
-    } else {
-      // No GPS: match detections sequentially to room players (best-effort)
-      const players = Object.values(roomPlayers).filter(p => p.alive);
-      if (players.length > 0) {
-        matched = players[Math.floor(centerX / overlay.width * players.length)] || players[0];
-      }
-    }
-
-    // *** KEY RULE: only draw if a room player is matched ***
+  scaled.forEach((box, i) => {
+    // Match detection index to room player index (wrap if more detections than players)
+    const matched = sorted_rp[i % sorted_rp.length];
     if (!matched) return;
 
-    const color = matched.team === player.team ? C.green : C.red;
-    drawDetectionBox(sx, sy, sw, sh, color, matched.name, matched.hp);
+    const color   = matched.team === player.team ? C.green : C.red;
+    const inScope = pointInBox(cx, cy, box.sx, box.sy, box.sw, box.sh);
+    if (inScope && matched.team !== player.team) scopeTarget = { color, name: matched.name };
+
+    drawDetectionBox(box.sx, box.sy, box.sw, box.sh, color, matched.name, matched.hp, inScope);
   });
 }
 
-// In solo mode: draw all detected people as enemies (red)
+// Solo: all detected people are enemies
 function drawCocoDetections(forcedColor) {
   if (!detections.length) return;
   const vw = camvideo.videoWidth  || overlay.width;
   const vh = camvideo.videoHeight || overlay.height;
   const scaleX = overlay.width  / vw;
   const scaleY = overlay.height / vh;
-
+  const cx = overlay.width/2, cy = overlay.height/2;
   detections.forEach(det => {
     const [bx, by, bw, bh] = det.bbox;
-    drawDetectionBox(
-      bx * scaleX, by * scaleY, bw * scaleX, bh * scaleY,
-      forcedColor || C.red, 'ENEMY', 100
-    );
+    const sx=bx*scaleX, sy=by*scaleY, sw=bw*scaleX, sh=bh*scaleY;
+    const inScope = pointInBox(cx, cy, sx, sy, sw, sh);
+    if (inScope) scopeTarget = { color: C.red, name: 'ENEMY' };
+    drawDetectionBox(sx, sy, sw, sh, forcedColor || C.red, 'ENEMY', 100, inScope);
   });
 }
 
-function drawDetectionBox(sx, sy, sw, sh, color, name, hp) {
+function drawDetectionBox(sx, sy, sw, sh, color, name, hp, inScope) {
+  ctx.shadowBlur = inScope ? 30 : 16;
+  ctx.lineWidth = inScope ? 3.5 : 2.5;
   ctx.save();
   ctx.shadowColor = color;
-  ctx.shadowBlur  = 14;
-
   // Main border
   ctx.strokeStyle = color;
-  ctx.lineWidth   = 2.5;
   ctx.strokeRect(sx, sy, sw, sh);
 
-  // Corner accents (thicker)
-  const cs = Math.min(sw, sh) * 0.2;
-  ctx.lineWidth = 4;
-  ctx.shadowBlur = 20;
+  // Corner accents
+  const cs = Math.min(sw, sh) * 0.18;
+  ctx.lineWidth = inScope ? 5 : 4;
   [[sx,sy,1,1],[sx+sw,sy,-1,1],[sx,sy+sh,1,-1],[sx+sw,sy+sh,-1,-1]].forEach(([x,y,dx,dy]) => {
     ctx.beginPath();
     ctx.moveTo(x + dx*cs, y); ctx.lineTo(x, y); ctx.lineTo(x, y + dy*cs);
     ctx.stroke();
   });
 
-  // Label background
   ctx.shadowBlur = 0;
-  ctx.fillStyle  = 'rgba(0,0,0,0.72)';
-  ctx.fillRect(sx, sy - 24, sw, 22);
 
-  // Name
-  ctx.fillStyle  = color;
-  ctx.font       = 'bold 12px "Share Tech Mono", monospace';
-  ctx.textAlign  = 'left';
-  ctx.fillText(name.substring(0, 14), sx + 5, sy - 7);
+  // Top label bar (name left, HP right)
+  ctx.fillStyle = 'rgba(0,0,0,0.80)';
+  ctx.fillRect(sx, sy - 26, sw, 24);
 
-  // HP bar below box
+  // Name — left side
+  ctx.fillStyle = color;
+  ctx.font      = 'bold 12px "Share Tech Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(name.substring(0, 10), sx + 5, sy - 8);
+
+  // HP number — TOP RIGHT of box as requested
   if (hp !== null) {
+    const hpText = Math.max(0, Math.round(hp)) + ' HP';
+    ctx.textAlign  = 'right';
+    ctx.fillStyle  = hp > 60 ? color : hp > 30 ? C.gold : C.red;
+    ctx.font       = 'bold 12px "Share Tech Mono", monospace';
+    ctx.fillText(hpText, sx + sw - 5, sy - 8);
+
+    // HP bar below box
     const barW = (Math.max(0, hp) / 100) * sw;
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(sx, sy + sh + 2, sw, 5);
-    ctx.fillStyle = color;
-    ctx.fillRect(sx, sy + sh + 2, barW, 5);
+    ctx.fillRect(sx, sy + sh + 2, sw, 4);
+    ctx.fillStyle = hp > 60 ? color : hp > 30 ? C.gold : C.red;
+    ctx.fillRect(sx, sy + sh + 2, barW, 4);
   }
 
   ctx.restore();
@@ -1108,8 +1259,8 @@ function drawRoomPlayersFromGPS() {
 }
 
 // Simple box (simulation)
-function drawBox(x, y, w, h, color, name, hp) {
-  drawDetectionBox(x - w/2, y - h/2, w, h, color, name, hp);
+function drawBox(x, y, w, h, color, name, hp, inScope) {
+  drawDetectionBox(x - w/2, y - h/2, w, h, color, name, hp, inScope);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1339,7 +1490,9 @@ function cleanup() {
   simAllies  = [];
   roomPlayers = {};
   ctx.clearRect(0, 0, overlay.width, overlay.height);
-  document.getElementById('loadingOverlay').style.display = '';
+  const co = document.getElementById('camBanner');
+  if (co) co.style.display = 'none';
+  document.getElementById('loadingOverlay').style.display = 'none';
   document.getElementById('endOverlay').classList.remove('show');
   document.getElementById('playerList').innerHTML = '';
 }
@@ -1357,6 +1510,8 @@ window.reloadAmmo   = reloadAmmo;
 window.heal         = heal;
 window.scan         = scan;
 window.switchCamera = switchCamera;
+window.requestCamera = requestCamera;
+window.skipCamera    = skipCamera;
 </script>
 </body>
 </html>
